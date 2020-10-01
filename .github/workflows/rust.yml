@@ -18,5 +18,7 @@ jobs:
     - uses: actions/checkout@v2
     - name: Build
       run: sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev libxcb-xfixes0-dev python3 -y && cargo build --release
-    - name: Run tests
-      run: cargo test --verbose
+    - uses: actions/upload-artifact@v2
+      with:     
+        name: my-artifact
+        path: target/release/alacritty
