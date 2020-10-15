@@ -4,7 +4,7 @@
 use std::cmp::min;
 use std::f64;
 use std::fmt::{self, Formatter};
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
@@ -17,7 +17,7 @@ use glutin::window::CursorIcon;
 use log::{debug, info};
 use parking_lot::MutexGuard;
 use unicode_width::UnicodeWidthChar;
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
 use wayland_client::{Display as WaylandDisplay, EventQueue};
 
 #[cfg(target_os = "macos")]
@@ -31,7 +31,9 @@ use alacritty_terminal::term::{RenderableCell, SizeInfo, Term, TermMode};
 use alacritty_terminal::term::{MIN_COLS, MIN_SCREEN_LINES};
 
 use crate::config::font::Font;
-use crate::config::window::{Dimensions, StartupMode};
+use crate::config::window::Dimensions;
+#[cfg(not(windows))]
+use crate::config::window::StartupMode;
 use crate::config::Config;
 use crate::event::{Mouse, SearchState};
 use crate::message_bar::{MessageBuffer, MessageType};
@@ -152,14 +154,15 @@ pub struct Display {
     /// Currently highlighted URL.
     pub highlighted_url: Option<Url>,
 
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
     pub wayland_event_queue: Option<EventQueue>,
+
+    #[cfg(not(any(target_os = "macos", windows)))]
+    pub is_x11: bool,
 
     renderer: QuadRenderer,
     glyph_cache: GlyphCache,
     meter: Meter,
-    #[cfg(not(any(target_os = "macos", windows)))]
-    is_x11: bool,
 }
 
 impl Display {
@@ -182,11 +185,11 @@ impl Display {
         debug!("Estimated window size: {:?}", estimated_size);
         debug!("Estimated cell size: {} x {}", cell_width, cell_height);
 
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
         let mut wayland_event_queue = None;
 
         // Initialize Wayland event queue, to handle Wayland callbacks.
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
         if let Some(display) = event_loop.wayland_display() {
             let display = unsafe { WaylandDisplay::from_external_display(display as _) };
             wayland_event_queue = Some(display.create_event_queue());
@@ -197,7 +200,7 @@ impl Display {
             event_loop,
             &config,
             estimated_size,
-            #[cfg(not(any(target_os = "macos", windows)))]
+            #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
             wayland_event_queue.as_ref(),
         )?;
 
@@ -251,8 +254,10 @@ impl Display {
         #[cfg(target_os = "macos")]
         set_font_smoothing(config.ui_config.font.use_thin_strokes());
 
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
         let is_x11 = event_loop.is_x11();
+        #[cfg(not(any(feature = "x11", target_os = "macos", windows)))]
+        let is_x11 = false;
 
         // On Wayland we can safely ignore this call, since the window isn't visible until you
         // actually draw something into it and commit those changes.
@@ -275,12 +280,12 @@ impl Display {
         }
 
         #[allow(clippy::single_match)]
+        #[cfg(not(windows))]
         match config.ui_config.window.startup_mode {
-            StartupMode::Fullscreen => window.set_fullscreen(true),
             #[cfg(target_os = "macos")]
             StartupMode::SimpleFullscreen => window.set_simple_fullscreen(true),
-            #[cfg(not(any(target_os = "macos", windows)))]
-            StartupMode::Maximized => window.set_maximized(true),
+            #[cfg(not(target_os = "macos"))]
+            StartupMode::Maximized if is_x11 => window.set_maximized(true),
             _ => (),
         }
 
@@ -294,7 +299,7 @@ impl Display {
             highlighted_url: None,
             #[cfg(not(any(target_os = "macos", windows)))]
             is_x11,
-            #[cfg(not(any(target_os = "macos", windows)))]
+            #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
             wayland_event_queue,
         })
     }
@@ -580,12 +585,12 @@ impl Display {
 
         // Frame event should be requested before swaping buffers, since it requires surface
         // `commit`, which is done by swap buffers under the hood.
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
         self.request_frame(&self.window);
 
         self.window.swap_buffers();
 
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
         if self.is_x11 {
             // On X11 `swap_buffers` does not block for vsync. However the next OpenGl command
             // will block to synchronize (this is `glClear` in Alacritty), which causes a
@@ -660,7 +665,7 @@ impl Display {
 
     /// Requst a new frame for a window on Wayland.
     #[inline]
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
     fn request_frame(&self, window: &Window) {
         let surface = match window.wayland_surface() {
             Some(surface) => surface,
